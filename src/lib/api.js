@@ -127,51 +127,141 @@ export async function deleteUserDoc(uid) {
 
 // ── סטטיסטיקות ───────────────────────────────────────────────────────────
 
-/** שאילתת collectionGroup בלי where/orderBy — לא דורשת אינדקס ייעודי.
- * שלושת הסטטיסטיקות (מילים שנשלטו, band פופולרי, מילים קשות) מחושבות
- * מאותה שליפה אחת כדי לא להוריד את כל ה-progress הפלטפורמה פעמיים. */
-export async function computeStatistics() {
-  const snap = await getDocs(collectionGroup(db, 'progress'));
+/** כל המשתמשים, בכל role — שליפה אחת שמשמשת את כל 5 הסעיפים בדף
+ * הסטטיסטיקות (במקום שאילתה נפרדת לכל סעיף). role/institutionId
+ * מסוננים ב-JS מהתוצאה, לא בשאילתה, כדי לא להכפיל round-trips. */
+export async function getAllUsers() {
+  const snap = await getDocs(collection(db, 'users'));
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+}
 
-  let masteredWords = 0;
-  const bandCounts = new Map();
-  const wordStats = new Map();
+// 1. פעילות יומית — series מגיע מ-buildDailyActivitySeries הקיים (Overview
+// כבר משתמש בו על אותם נתונים בדיוק); כאן רק מחשבים סיכומים ממנו.
+export function computeDailyActivityStats(series) {
+  const activeDays = series.filter((d) => d.count > 0);
+  const peak = series.reduce((best, d) => (d.count > best.count ? d : best), { date: '—', count: 0 });
+  const avgPerDay = series.length ? series.reduce((sum, d) => sum + d.count, 0) / series.length : 0;
+  return { totalActiveDays: activeDays.length, peakDay: peak.date, peakCount: peak.count, avgPerDay };
+}
+
+// 2. מעורבות — ממוצעים על פני כל התלמידים, גם אלה שחסרים להם שדות
+// (משתמשים ישנים לפני שהשדות האלה נוספו) מטופלים כ-0, לא נזרקים החוצה.
+export function computeEngagementStats(students) {
+  let totalAttempts = 0;
+  let totalCorrect = 0;
+  let totalXp = 0;
+  let streakSum = 0;
+  let activeStreakCount = 0;
+
+  students.forEach((s) => {
+    totalAttempts += s.totalAttemptsCount || 0;
+    totalCorrect += s.totalCorrectAttempts || 0;
+    totalXp += s.totalXp ?? s.xp ?? 0;
+    const streak = s.streak || 0;
+    if (streak > 0) {
+      streakSum += streak;
+      activeStreakCount++;
+    }
+  });
+
+  return {
+    totalAttempts,
+    totalCorrect,
+    avgAccuracy: totalAttempts > 0 ? (totalCorrect / totalAttempts) * 100 : 0,
+    avgXpPerUser: students.length > 0 ? totalXp / students.length : 0,
+    // "משתמש פעיל" כאן = יש לו streak>0 כרגע; ממוצע רק על אלה, לא כולל
+    // תלמידים בלי רצף פעיל (streak=0 היה מוריד את הממוצע באופן מטעה).
+    avgStreakPerActiveUser: activeStreakCount > 0 ? streakSum / activeStreakCount : 0,
+    activeStreakCount,
+  };
+}
+
+export const PRACTICE_MODULES = [
+  'flashcards',
+  'quiz',
+  'spelling',
+  'matching',
+  'whoami',
+  'truefalse',
+  'whatmeans',
+  'fillsentence',
+];
+
+/** בדיקת זמינות אמיתית, לא הנחה קבועה בקוד — שדה module לא קיים היום על
+ * אף מסמך progress (נבדק ישירות ב-Firestore), אבל אם ייווסף בעתיד הסעיף
+ * הזה יתחיל להציג נתונים אוטומטית, בלי צורך בשינוי קוד. */
+export async function computeModuleUsageStats() {
+  const snap = await getDocs(collectionGroup(db, 'progress'));
+  let hasModuleField = false;
+  const moduleCounts = new Map();
 
   snap.forEach((docSnap) => {
     const p = docSnap.data();
-    const correct = typeof p.correctAttempts === 'number' ? p.correctAttempts : 0;
-    const total = typeof p.totalAttempts === 'number' ? p.totalAttempts : 0;
-    const word = p.englishWord;
-
-    if (correct >= 3) masteredWords++;
-
-    if (p.sourceListId) {
-      bandCounts.set(p.sourceListId, (bandCounts.get(p.sourceListId) || 0) + 1);
-    }
-
-    if (word && total > 0) {
-      const errors = Math.max(0, total - correct);
-      const entry = wordStats.get(word) || { word, attempts: 0, errors: 0 };
-      entry.attempts += total;
-      entry.errors += errors;
-      wordStats.set(word, entry);
+    if ('module' in p) {
+      hasModuleField = true;
+      const key = p.module || 'unknown';
+      moduleCounts.set(key, (moduleCounts.get(key) || 0) + (p.totalAttempts || 0));
     }
   });
 
-  let mostPopularBand = null;
-  let bestCount = 0;
-  bandCounts.forEach((count, band) => {
-    if (count > bestCount) {
-      bestCount = count;
-      mostPopularBand = band;
-    }
+  if (!hasModuleField) return { available: false };
+
+  return {
+    available: true,
+    data: PRACTICE_MODULES.map((m) => ({ module: m, attempts: moduleCounts.get(m) || 0 })),
+  };
+}
+
+// 4. שימור וצמיחה
+export function computeNewUsersPerWeek(allUsers) {
+  const withCreatedAt = allUsers.filter((u) => u.createdAt && typeof u.createdAt.toDate === 'function');
+  const now = Date.now();
+  const buckets = Array.from({ length: 8 }, () => 0); // buckets[0] = 0-6 ימים אחורה (השבוע הנוכחי)
+
+  withCreatedAt.forEach((u) => {
+    const daysAgo = Math.floor((now - u.createdAt.toDate().getTime()) / (1000 * 60 * 60 * 24));
+    const weekIndex = Math.floor(daysAgo / 7);
+    if (weekIndex >= 0 && weekIndex < 8) buckets[weekIndex]++;
   });
 
-  const hardestWords = [...wordStats.values()]
-    .sort((a, b) => b.errors - a.errors)
-    .slice(0, 10);
+  const series = buckets.map((count, i) => ({ week: i === 0 ? 'השבוע' : `לפני ${i} שב׳`, count })).reverse();
 
-  return { masteredWords, mostPopularBand, hardestWords };
+  return { series, coverage: { withCreatedAt: withCreatedAt.length, total: allUsers.length } };
+}
+
+export function computeRetentionStats(students) {
+  const since7d = dateKeyIsrael(-6);
+  const since30d = dateKeyIsrael(-29);
+  return {
+    totalRegistered: students.length,
+    active7d: students.filter((s) => s.lastActiveDate && s.lastActiveDate >= since7d).length,
+    active30d: students.filter((s) => s.lastActiveDate && s.lastActiveDate >= since30d).length,
+    returningUsers: students.filter((s) => (s.totalActiveDays || 0) > 1).length,
+  };
+}
+
+// 5. פילוח מוסדות — מחושב מ-institutions/students/teachers שכבר נשלפו
+// פעם אחת (Institutions.jsx שולף institutions בנפרד; כאן groupings ב-JS,
+// בלי שאילתת ספירה נוספת per-institution כמו בדף המוסדות).
+export function computeInstitutionBreakdown(institutions, students, teachers) {
+  const since7d = dateKeyIsrael(-6);
+  return institutions.map((inst) => {
+    const instStudents = students.filter((s) => s.institutionId === inst.id);
+    const instTeachers = teachers.filter((t) => t.institutionId === inst.id);
+    const n = instStudents.length;
+    const avgXp = n > 0 ? instStudents.reduce((sum, s) => sum + (s.totalXp ?? s.xp ?? 0), 0) / n : 0;
+    const avgStreak = n > 0 ? instStudents.reduce((sum, s) => sum + (s.streak || 0), 0) / n : 0;
+    const active7dCount = instStudents.filter((s) => s.lastActiveDate && s.lastActiveDate >= since7d).length;
+    return {
+      id: inst.id,
+      name: inst.name,
+      studentCount: n,
+      teacherCount: instTeachers.length,
+      avgXp,
+      avgStreak,
+      pctActive7d: n > 0 ? (active7dCount / n) * 100 : 0,
+    };
+  });
 }
 
 // ── תוכן ─────────────────────────────────────────────────────────────────

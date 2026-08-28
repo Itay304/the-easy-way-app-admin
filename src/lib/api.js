@@ -97,10 +97,22 @@ export async function setUserAsPrincipal(uid, institutionId) {
   return updateDoc(doc(db, 'users', uid), { role: 'principal', institutionId });
 }
 
+/** קישור הצטרפות למורים למוסד נתון. אפליקציית המורה עדיין לא קוראת את
+ * ה-URL param הזה (?institutionCode=) בעת טעינה — נבדק ואושר. יוצרים
+ * את הקישור כאן בכל זאת כדי שיהיה מוכן; קליטת הפרמטר בצד אפליקציית
+ * המורה היא שינוי נפרד, מחוץ לתחום הכלי הזה. */
+export function getTeacherJoinLink(institutionId) {
+  return `https://teacher.theeasywayapp.co.il?institutionCode=${institutionId}`;
+}
+
 // ── משתמשים ──────────────────────────────────────────────────────────────
 
 /** חיפוש מדויק בלבד (email== או uid) — Firestore לא תומך בחיפוש טקסט
- * חופשי/substring; מספיק לכלי ניהול פנימי. */
+ * חופשי/substring; מספיק לכלי ניהול פנימי. UID נשאר case-exact (מזהה
+ * שנוצר ע"י Firebase, רגיש לאותיות באמת) — רק ה-email מנורמל ל-lowercase
+ * לפני ההשוואה, כי Firebase Auth שומר אימיילים ב-lowercase, וחיפוש
+ * "TRY@gmail.com" מול משתמש שנשמר כ-"try@gmail.com" היה נכשל בשקט
+ * (== מדויק, לא case-insensitive) — נבדק ואושר ישירות מול Firestore. */
 export async function searchUsers(term) {
   const trimmed = term.trim();
   if (!trimmed) return [];
@@ -110,7 +122,7 @@ export async function searchUsers(term) {
     return [{ uid: byUidSnap.id, ...byUidSnap.data() }];
   }
 
-  const q = query(collection(db, 'users'), where('email', '==', trimmed));
+  const q = query(collection(db, 'users'), where('email', '==', trimmed.toLowerCase()));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
 }
@@ -259,6 +271,7 @@ export function computeInstitutionBreakdown(institutions, students, teachers) {
       teacherCount: instTeachers.length,
       avgXp,
       avgStreak,
+      active7dCount,
       pctActive7d: n > 0 ? (active7dCount / n) * 100 : 0,
     };
   });

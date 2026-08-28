@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Plus, ShieldCheck, Ban, PlayCircle } from 'lucide-react';
+import { Plus, ShieldCheck, Ban, PlayCircle, Link2, Check } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import SetPrincipalModal from '../components/SetPrincipalModal.jsx';
 import NewInstitutionModal from '../components/NewInstitutionModal.jsx';
-import { getAllInstitutions, getInstitutionMemberCounts, setInstitutionDisabled } from '../lib/api.js';
+import { getAllInstitutions, getInstitutionMemberCounts, setInstitutionDisabled, getTeacherJoinLink } from '../lib/api.js';
 
 export default function Institutions() {
   const [institutions, setInstitutions] = useState(null);
@@ -13,6 +13,7 @@ export default function Institutions() {
   const [principalTarget, setPrincipalTarget] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [busyId, setBusyId] = useState('');
+  const [copiedId, setCopiedId] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +50,16 @@ export default function Institutions() {
     }
   }
 
+  async function handleCopyLink(inst) {
+    try {
+      await navigator.clipboard.writeText(getTeacherJoinLink(inst.id));
+      setCopiedId(inst.id);
+      setTimeout(() => setCopiedId(''), 2000);
+    } catch (err) {
+      console.error('[admin] copy join link failed:', err);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -77,6 +88,7 @@ export default function Institutions() {
                   <th className="text-right font-semibold px-4 py-3">מורים</th>
                   <th className="text-right font-semibold px-4 py-3">תלמידים</th>
                   <th className="text-right font-semibold px-4 py-3">סטטוס</th>
+                  <th className="text-right font-semibold px-4 py-3">קישור הצטרפות למורים</th>
                   <th className="text-right font-semibold px-4 py-3">פעולות</th>
                 </tr>
               </thead>
@@ -97,6 +109,15 @@ export default function Institutions() {
                           פעיל
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleCopyLink(inst)}
+                        className="flex items-center gap-1 text-brand-turquoise font-semibold text-xs hover:underline whitespace-nowrap"
+                      >
+                        {copiedId === inst.id ? <Check size={14} /> : <Link2 size={14} />}
+                        {copiedId === inst.id ? 'הועתק!' : 'העתק קישור'}
+                      </button>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 whitespace-nowrap">
@@ -121,7 +142,7 @@ export default function Institutions() {
                 ))}
                 {institutions.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-brand-grey-text">
+                    <td colSpan={7} className="px-4 py-8 text-center text-brand-grey-text">
                       אין מוסדות עדיין.
                     </td>
                   </tr>

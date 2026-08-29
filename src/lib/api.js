@@ -199,24 +199,21 @@ export const PRACTICE_MODULES = [
   'fillsentence',
 ];
 
-/** בדיקת זמינות אמיתית, לא הנחה קבועה בקוד — שדה module לא קיים היום על
- * אף מסמך progress (נבדק ישירות ב-Firestore), אבל אם ייווסף בעתיד הסעיף
- * הזה יתחיל להציג נתונים אוטומטית, בלי צורך בשינוי קוד. */
+/** קורא מ-users/{uid}/moduleSessions (the-easy-way-app-student,
+ * src/lib/progressSync.js) — מסמך per-attempt עם { module, correct },
+ * לא מ-progress (ששם יש רק lastModule, המודול האחרון בלבד, לא סכום
+ * ניסיונות לפי מודול). זמינות עדיין נבדקת בפועל (collection ריק =
+ * "לא זמין"), לא הנחה קבועה בקוד — אם הכתיבה תיפסק/תשתנה, הסעיף חוזר
+ * להציג את ההודעה במקום נתונים ריקים/שגויים. */
 export async function computeModuleUsageStats() {
-  const snap = await getDocs(collectionGroup(db, 'progress'));
-  let hasModuleField = false;
+  const snap = await getDocs(collectionGroup(db, 'moduleSessions'));
+  if (snap.empty) return { available: false };
+
   const moduleCounts = new Map();
-
   snap.forEach((docSnap) => {
-    const p = docSnap.data();
-    if ('module' in p) {
-      hasModuleField = true;
-      const key = p.module || 'unknown';
-      moduleCounts.set(key, (moduleCounts.get(key) || 0) + (p.totalAttempts || 0));
-    }
+    const key = docSnap.data().module || 'unknown';
+    moduleCounts.set(key, (moduleCounts.get(key) || 0) + 1);
   });
-
-  if (!hasModuleField) return { available: false };
 
   return {
     available: true,

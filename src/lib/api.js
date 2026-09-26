@@ -13,7 +13,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase.js';
-import { dateKeyIsrael } from './dateUtils.js';
+import { dateKeyIsrael, dateKeyIsraelFor } from './dateUtils.js';
 
 // ── סקירה כללית ─────────────────────────────────────────────────────────
 
@@ -197,28 +197,125 @@ export const PRACTICE_MODULES = [
   'truefalse',
   'whatmeans',
   'fillsentence',
+  'varied',
 ];
 
-/** קורא מ-users/{uid}/moduleSessions (the-easy-way-app-student,
- * src/lib/progressSync.js) — מסמך per-attempt עם { module, correct },
- * לא מ-progress (ששם יש רק lastModule, המודול האחרון בלבד, לא סכום
- * ניסיונות לפי מודול). זמינות עדיין נבדקת בפועל (collection ריק =
- * "לא זמין"), לא הנחה קבועה בקוד — אם הכתיבה תיפסק/תשתנה, הסעיף חוזר
- * להציג את ההודעה במקום נתונים ריקים/שגויים. */
-export async function computeModuleUsageStats() {
-  const snap = await getDocs(collectionGroup(db, 'moduleSessions'));
-  if (snap.empty) return { available: false };
+export const MODULE_LABELS = {
+  flashcards: 'כרטיסיות',
+  quiz: 'חידון',
+  spelling: 'כתיב',
+  matching: 'התאמה',
+  whoami: 'מי אני',
+  truefalse: 'נכון/לא נכון',
+  whatmeans: 'מה המשמעות',
+  fillsentence: 'השלם משפט',
+  varied: 'מגוון',
+};
 
-  const moduleCounts = new Map();
-  snap.forEach((docSnap) => {
-    const key = docSnap.data().module || 'unknown';
-    moduleCounts.set(key, (moduleCounts.get(key) || 0) + 1);
+/** כל מסמכי moduleSessions בפלטפורמה, שליפה אחת (collectionGroup) —
+ * (the-easy-way-app-student, src/lib/progressSync.js): מסמך per-attempt
+ * עם { module, correct, timestamp, wordKey, assignmentId? }. כולל uid
+ * ההורה (doc.ref.parent.parent.id) כי moduleSessions עצמו לא נושא
+ * institutionId — סינון לפי מוסד נעשה ב-JS מאוחר יותר (Statistics.jsx),
+ * ע"י התאמה מול allUsers שכבר נשלף שם. timestamp מומר ל-Date מיד כדי
+ * שכל שאר החישובים לא יצטרכו לבדוק .toDate בכל מקום. */
+export async function getAllModuleSessions() {
+  const snap = await getDocs(collectionGroup(db, 'moduleSessions'));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      uid: d.ref.parent.parent.id,
+      module: data.module,
+      correct: !!data.correct,
+      wordKey: data.wordKey || null,
+      assignmentId: data.assignmentId || null,
+      date: data.timestamp && typeof data.timestamp.toDate === 'function' ? data.timestamp.toDate() : null,
+    };
+  });
+}
+
+/** 3א. גרף עמודות — סה"כ ניסיונות למודול (כל הזמן), ממוין יורד. */
+export function computeModuleTotals(sessions) {
+  const counts = new Map();
+  sessions.forEach((s) => counts.set(s.module, (counts.get(s.module) || 0) + 1));
+  return PRACTICE_MODULES.map((m) => ({ module: m, label: MODULE_LABELS[m] || m, attempts: counts.get(m) || 0 })).sort(
+    (a, b) => b.attempts - a.attempts
+  );
+}
+
+/** 3ב. גרף עמודות — % הצלחה למודול. מקבל את סדר המודולים מגרף הסה"כ
+ * (order) כדי ששני הגרפים הסמוכים יסודרו באותו סדר קטגוריות — קל יותר
+ * להשוות ביניהם ויזואלית. */
+export function computeModuleAccuracy(sessions, order) {
+  const stats = new Map(); // module -> {total, correct}
+  sessions.forEach((s) => {
+    const entry = stats.get(s.module) || { total: 0, correct: 0 };
+    entry.total++;
+    if (s.correct) entry.correct++;
+    stats.set(s.module, entry);
+  });
+  const moduleOrder = order && order.length > 0 ? order : PRACTICE_MODULES;
+  return moduleOrder.map((m) => {
+    const entry = stats.get(m) || { total: 0, correct: 0 };
+    return {
+      module: m,
+      label: MODULE_LABELS[m] || m,
+      accuracyPct: entry.total > 0 ? (entry.correct / entry.total) * 100 : 0,
+    };
+  });
+}
+
+/** 3ג. גרף קו — ניסיונות למודול ליום, 30 יום אחרונים, קו אחד למודול.
+ * dataKey של כל קו = שם המודול (למשל "quiz") כדי ש-<Line dataKey="quiz">
+ * יתאים ישירות לשדות ה-series; התווית (label) בעברית מוצגת רק ב-legend/
+ * tooltip בקומפוננטה עצמה, לא כאן. */
+export function computeModuleTrend(sessions) {
+  const days = [];
+  for (let i = 29; i >= 0; i--) days.push(dateKeyIsrael(-i));
+  const dayIndex = new Map(days.map((d, i) => [d, i]));
+
+  const series = days.map((d) => {
+    const row = { date: d.slice(5) };
+    PRACTICE_MODULES.forEach((m) => {
+      row[m] = 0;
+    });
+    return row;
   });
 
-  return {
-    available: true,
-    data: PRACTICE_MODULES.map((m) => ({ module: m, attempts: moduleCounts.get(m) || 0 })),
-  };
+  sessions.forEach((s) => {
+    if (!s.date) return;
+    const idx = dayIndex.get(dateKeyIsraelFor(s.date));
+    if (idx === undefined) return;
+    series[idx][s.module] = (series[idx][s.module] || 0) + 1;
+  });
+
+  return series;
+}
+
+/** 3ד. טבלה — שורה אחת למודול: סה"כ ניסיונות, נכונות, שגויות, % הצלחה,
+ * יום פעיל אחרון. ממוין יורד לפי סה"כ ניסיונות, אותו סדר כמו גרף הסה"כ. */
+export function computeModuleTable(sessions) {
+  const stats = new Map(); // module -> {total, correct, lastDate}
+  sessions.forEach((s) => {
+    const entry = stats.get(s.module) || { total: 0, correct: 0, lastDate: null };
+    entry.total++;
+    if (s.correct) entry.correct++;
+    if (s.date && (!entry.lastDate || s.date > entry.lastDate)) entry.lastDate = s.date;
+    stats.set(s.module, entry);
+  });
+
+  return PRACTICE_MODULES.map((m) => {
+    const entry = stats.get(m) || { total: 0, correct: 0, lastDate: null };
+    return {
+      module: m,
+      label: MODULE_LABELS[m] || m,
+      total: entry.total,
+      correct: entry.correct,
+      incorrect: entry.total - entry.correct,
+      successPct: entry.total > 0 ? (entry.correct / entry.total) * 100 : 0,
+      lastActiveDay: entry.lastDate ? dateKeyIsraelFor(entry.lastDate) : null,
+    };
+  }).sort((a, b) => b.total - a.total);
 }
 
 // 4. שימור וצמיחה

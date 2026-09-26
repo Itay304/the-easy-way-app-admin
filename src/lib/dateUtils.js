@@ -6,3 +6,10 @@ export function dateKeyIsrael(offsetDays = 0) {
   d.setDate(d.getDate() + offsetDays);
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(d);
 }
+
+/** אותו פורמט, אבל לתאריך נתון (למשל Timestamp.toDate() מ-Firestore) —
+ * לא "עכשיו + offset". משמש לחישובי מגמה שצריכים לקבץ אירועים אמיתיים
+ * (moduleSessions) לפי יום ישראלי, לא ליצור את סדרת הימים עצמה. */
+export function dateKeyIsraelFor(date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(date);
+}

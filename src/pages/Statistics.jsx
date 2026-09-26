@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  BarChart,
+  Bar,
+  Cell,
+  LineChart,
+  Line,
+  Legend,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import {
   CalendarDays,
   TrendingUp,
@@ -22,11 +34,21 @@ import {
   buildDailyActivitySeries,
   computeDailyActivityStats,
   computeEngagementStats,
-  computeModuleUsageStats,
+  getAllModuleSessions,
+  computeModuleTotals,
+  computeModuleAccuracy,
+  computeModuleTrend,
+  computeModuleTable,
+  PRACTICE_MODULES,
+  MODULE_LABELS,
   computeNewUsersPerWeek,
   computeRetentionStats,
   computeInstitutionBreakdown,
 } from '../lib/api.js';
+
+// צבע קבוע למודול, עקבי בין הגרפים (עמודות/קו) — לפי סדר PRACTICE_MODULES.
+const MODULE_COLORS = ['#0891b2', '#22d3ee', '#f97316', '#a855f7', '#ef4444', '#22c55e', '#eab308', '#3b82f6', '#ec4899'];
+const moduleColor = (m) => MODULE_COLORS[PRACTICE_MODULES.indexOf(m) % MODULE_COLORS.length];
 
 function SectionCard({ title, children }) {
   return (
@@ -49,7 +71,7 @@ function ratioText(part, total, partLabel, totalLabel) {
 }
 
 export default function Statistics() {
-  const [raw, setRaw] = useState(null); // { allUsers, institutions, moduleUsage } — נשלף פעם אחת בלבד
+  const [raw, setRaw] = useState(null); // { allUsers, institutions, moduleSessions } — נשלף פעם אחת בלבד
   const [error, setError] = useState('');
   const [selectedInstitution, setSelectedInstitution] = useState('all');
 
@@ -59,12 +81,12 @@ export default function Statistics() {
     async function load() {
       setError('');
       try {
-        const [allUsers, institutions, moduleUsage] = await Promise.all([
+        const [allUsers, institutions, moduleSessions] = await Promise.all([
           getAllUsers(),
           getAllInstitutions(),
-          computeModuleUsageStats(),
+          getAllModuleSessions(),
         ]);
-        if (!cancelled) setRaw({ allUsers, institutions, moduleUsage });
+        if (!cancelled) setRaw({ allUsers, institutions, moduleSessions });
       } catch (err) {
         console.error('[admin] Statistics load failed:', err);
         if (!cancelled) setError('שגיאה בטעינת הסטטיסטיקות.');
@@ -78,10 +100,12 @@ export default function Statistics() {
   }, []);
 
   // כל הסטטיסטיקות נגזרות מחדש מתוך raw כשהמוסד הנבחר משתנה — בלי
-  // שאילתת Firestore נוספת, כי allUsers/institutions כבר נשלפו במלואם.
+  // שאילתת Firestore נוספת, כי allUsers/institutions/moduleSessions כבר
+  // נשלפו במלואם. moduleSessions לא נושא institutionId בעצמו, אז הסינון
+  // נעשה כאן ע"י התאמת uid לקבוצת התלמידים של המוסד הנבחר.
   const data = useMemo(() => {
     if (!raw) return null;
-    const { allUsers, institutions, moduleUsage } = raw;
+    const { allUsers, institutions, moduleSessions } = raw;
 
     const filteredUsers =
       selectedInstitution === 'all' ? allUsers : allUsers.filter((u) => u.institutionId === selectedInstitution);
@@ -92,10 +116,19 @@ export default function Statistics() {
     const allStudents = allUsers.filter((u) => u.role === 'student');
     const allTeachers = allUsers.filter((u) => u.role === 'teacher');
 
+    const studentUids = new Set(students.map((s) => s.uid));
+    const filteredSessions =
+      selectedInstitution === 'all' ? moduleSessions : moduleSessions.filter((s) => studentUids.has(s.uid));
+
+    const moduleTotals = computeModuleTotals(filteredSessions);
+
     return {
       daily: { series: dailySeries, ...computeDailyActivityStats(dailySeries) },
       engagement: computeEngagementStats(students),
-      moduleUsage,
+      moduleTotals,
+      moduleAccuracy: computeModuleAccuracy(filteredSessions, moduleTotals.map((m) => m.module)),
+      moduleTrend: computeModuleTrend(filteredSessions),
+      moduleTable: computeModuleTable(filteredSessions),
       growth: computeNewUsersPerWeek(filteredUsers),
       retention: computeRetentionStats(students),
       institutionBreakdown: computeInstitutionBreakdown(institutions, allStudents, allTeachers),
@@ -166,23 +199,102 @@ export default function Statistics() {
 
       {/* 3. שימוש במודולים */}
       <SectionCard title="שימוש במודולים">
-        {data.moduleUsage.available ? (
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.moduleUsage.data} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="module" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="attempts" fill="#0891b2" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        ) : (
+        {data.moduleTotals.every((m) => m.attempts === 0) ? (
           <div className="flex items-center gap-3 text-brand-grey-text text-sm py-4">
             <Layers size={18} className="shrink-0" />
-            מעקב לפי מודול תרגול לא נשמר עדיין ב-Firestore באף מקום (progress docs, ולא נמצא collection נפרד
-            שעוקב אחרי ניסיונות לפי מודול) — אין מה להציג כרגע.
+            אין עדיין נתוני שימוש במודולים עבור הבחירה הנוכחית.
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold text-brand-text mb-2">סה״כ ניסיונות למודול (כל הזמן)</h3>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.moduleTotals} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar dataKey="attempts" radius={[4, 4, 0, 0]}>
+                      {data.moduleTotals.map((m) => (
+                        <Cell key={m.module} fill={moduleColor(m.module)} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-brand-text mb-2">אחוז הצלחה למודול</h3>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.moduleAccuracy} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                    <Tooltip formatter={(v) => `${v.toFixed(1)}%`} />
+                    <Bar dataKey="accuracyPct" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-brand-text mb-2">מגמת ניסיונות למודול — 30 יום אחרונים</h3>
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={data.moduleTrend} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend
+                      formatter={(value) => MODULE_LABELS[value] || value}
+                      wrapperStyle={{ fontSize: 11 }}
+                    />
+                    {PRACTICE_MODULES.map((m) => (
+                      <Line
+                        key={m}
+                        type="monotone"
+                        dataKey={m}
+                        name={m}
+                        stroke={moduleColor(m)}
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-brand-grey-text text-xs border-b border-brand-border">
+                    <th className="text-right font-semibold px-3 py-2">שם המודול</th>
+                    <th className="text-right font-semibold px-3 py-2">סה״כ ניסיונות</th>
+                    <th className="text-right font-semibold px-3 py-2">נכונות</th>
+                    <th className="text-right font-semibold px-3 py-2">שגויות</th>
+                    <th className="text-right font-semibold px-3 py-2">אחוז הצלחה</th>
+                    <th className="text-right font-semibold px-3 py-2">יום פעיל אחרון</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.moduleTable.map((m) => (
+                    <tr key={m.module} className="border-b border-brand-border last:border-0">
+                      <td className="px-3 py-2 font-semibold text-brand-text whitespace-nowrap">{m.label}</td>
+                      <td className="px-3 py-2">{fmt(m.total)}</td>
+                      <td className="px-3 py-2">{fmt(m.correct)}</td>
+                      <td className="px-3 py-2">{fmt(m.incorrect)}</td>
+                      <td className="px-3 py-2">{m.total > 0 ? `${m.successPct.toFixed(1)}%` : '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{m.lastActiveDay || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </SectionCard>

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import useAdminAuth from './hooks/useAdminAuth.js';
-import PasswordGate from './pages/PasswordGate.jsx';
+import Login from './pages/Login.jsx';
+import Unauthorized from './pages/Unauthorized.jsx';
 import LoadingSpinner from './components/LoadingSpinner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import BottomTabs from './components/BottomTabs.jsx';
@@ -23,17 +24,18 @@ function Layout() {
 }
 
 export default function App() {
-  const { passed, status, error, tryPassword } = useAdminAuth();
+  const { status } = useAdminAuth();
 
-  if (!passed) return <PasswordGate onSubmit={tryPassword} />;
-
-  if (status !== 'ready') {
+  if (status === 'loading') {
     return (
       <div className="min-h-dvh flex items-center justify-center px-6">
-        {status === 'error' ? <p className="text-red-600 text-center">{error}</p> : <LoadingSpinner />}
+        <LoadingSpinner />
       </div>
     );
   }
+
+  if (status === 'signed-out') return <Login />;
+  if (status === 'unauthorized') return <Unauthorized />;
 
   return (
     <BrowserRouter>

@@ -158,7 +158,7 @@ export default function Statistics() {
 
       {/* 1. פעילות יומית */}
       <SectionCard title="פעילות יומית — 30 יום אחרונים">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <StatCard
             icon={CalendarDays}
             label="ימים עם פעילות"

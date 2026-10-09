@@ -30,7 +30,7 @@ export default function Login() {
   return (
     <div className="min-h-dvh flex flex-col items-center justify-center px-6">
       <img src="/icons/icon-192.png" alt="EasyLex" className="h-16 w-16 rounded-2xl shadow-md mb-4" />
-      <h1 className="text-xl font-bold text-brand-text mb-1">EasyLex — ניהול על</h1>
+      <h1 className="text-h1 font-bold text-brand-text mb-1">EasyLex — ניהול על</h1>
       <p className="text-brand-grey-text text-sm mb-6">כלי פנימי — התחברות עם חשבון סופר-אדמין</p>
 
       <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-3">

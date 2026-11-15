@@ -4,7 +4,13 @@ import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import SetPrincipalModal from '../components/SetPrincipalModal.jsx';
 import NewInstitutionModal from '../components/NewInstitutionModal.jsx';
-import { getAllInstitutions, getInstitutionMemberCounts, setInstitutionDisabled, getTeacherJoinLink } from '../lib/api.js';
+import {
+  getAllInstitutions,
+  getInstitutionMemberCounts,
+  setInstitutionDisabled,
+  setInstitutionHideSensitiveWords,
+  getTeacherJoinLink,
+} from '../lib/api.js';
 
 export default function Institutions() {
   const [institutions, setInstitutions] = useState(null);
@@ -50,6 +56,19 @@ export default function Institutions() {
     }
   }
 
+  async function handleToggleHideSensitive(inst) {
+    setBusyId(inst.id);
+    try {
+      await setInstitutionHideSensitiveWords(inst.id, inst.hideSensitiveWords !== true);
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      console.error('[admin] setInstitutionHideSensitiveWords failed:', err);
+      setError('שגיאה בעדכון הגדרת התוכן של המוסד.');
+    } finally {
+      setBusyId('');
+    }
+  }
+
   async function handleCopyLink(inst) {
     try {
       await navigator.clipboard.writeText(getTeacherJoinLink(inst.id));
@@ -88,6 +107,7 @@ export default function Institutions() {
                   <th className="text-right font-semibold px-4 py-3">מורים</th>
                   <th className="text-right font-semibold px-4 py-3">תלמידים</th>
                   <th className="text-right font-semibold px-4 py-3">סטטוס</th>
+                  <th className="text-right font-semibold px-4 py-3">תוכן מותאם לבתי ספר דתיים</th>
                   <th className="text-right font-semibold px-4 py-3">קישור הצטרפות למורים</th>
                   <th className="text-right font-semibold px-4 py-3">פעולות</th>
                 </tr>
@@ -109,6 +129,24 @@ export default function Institutions() {
                           פעיל
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        role="switch"
+                        aria-checked={inst.hideSensitiveWords === true}
+                        aria-label={`תוכן מותאם לבתי ספר דתיים — ${inst.name}`}
+                        onClick={() => handleToggleHideSensitive(inst)}
+                        disabled={busyId === inst.id}
+                        className={`w-11 h-6 rounded-full transition relative disabled:opacity-50 ${
+                          inst.hideSensitiveWords === true ? 'bg-brand-turquoise' : 'bg-black/10'
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${
+                            inst.hideSensitiveWords === true ? 'right-1' : 'right-6'
+                          }`}
+                        />
+                      </button>
                     </td>
                     <td className="px-4 py-3">
                       <button
@@ -142,7 +180,7 @@ export default function Institutions() {
                 ))}
                 {institutions.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-brand-grey-text">
+                    <td colSpan={8} className="px-4 py-8 text-center text-brand-grey-text">
                       אין מוסדות עדיין.
                     </td>
                   </tr>

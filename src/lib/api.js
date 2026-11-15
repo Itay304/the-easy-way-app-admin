@@ -93,6 +93,12 @@ export async function setInstitutionDisabled(institutionId, disabled) {
   return updateDoc(doc(db, 'institutions', institutionId), { disabled });
 }
 
+/** "תוכן מותאם לבתי ספר דתיים" — מסתיר מתלמידי המוסד מילים מתויגות sensitive (ברירת מחדל: כבוי).
+ *  אותו שדה שמנהל המוסד משנה מאפליקציית המורה (setInstitutionContentSettings). */
+export async function setInstitutionHideSensitiveWords(institutionId, hideSensitiveWords) {
+  return updateDoc(doc(db, 'institutions', institutionId), { hideSensitiveWords });
+}
+
 export async function setUserAsPrincipal(uid, institutionId) {
   return updateDoc(doc(db, 'users', uid), { role: 'principal', institutionId });
 }
